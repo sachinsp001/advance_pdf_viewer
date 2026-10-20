@@ -1,0 +1,1396 @@
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF Studio Pro — Modern PDF Viewer & Editor</title>
+
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          }
+        }
+      }
+    };
+  </script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- PDF.js (v3.11.174 stable UMD build) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+  <!-- Fabric.js (v5.3.1 stable build for interactive canvas overlays) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+
+  <!-- pdf-lib (v1.17.1 for generating & modifying original PDF documents) -->
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+
+  <style>
+    #pdf-scroll-container {
+      scroll-behavior: smooth;
+    }
+
+    #pdf-scroll-container.auto-scrolling {
+      scroll-behavior: auto !important;
+    }
+
+    /* Dark Mode inversion strictly on the background PDF canvas so annotations remain accurate */
+    .pdf-invert .pdf-bg-canvas {
+      filter: invert(1) hue-rotate(180deg) contrast(0.95);
+    }
+
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.05);
+    }
+    .dark ::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.04);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(100, 116, 139, 0.4);
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(100, 116, 139, 0.65);
+    }
+
+    .pdf-page-wrapper {
+      position: relative;
+      margin: 0 auto 28px auto;
+      box-shadow: 0 12px 32px -4px rgba(15, 23, 42, 0.14), 0 4px 12px -2px rgba(15, 23, 42, 0.08);
+      border-radius: 6px;
+      overflow: hidden;
+      background-color: #ffffff;
+      transition: box-shadow 0.2s ease, transform 0.2s ease;
+    }
+
+    .dark .pdf-page-wrapper {
+      box-shadow: 0 14px 36px -4px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }
+
+    .pdf-page-wrapper.active-page-ring {
+      outline: 2px solid #6366f1;
+      outline-offset: 3px;
+    }
+
+    .pdf-bg-canvas {
+      display: block;
+      pointer-events: none;
+      transition: filter 0.3s ease;
+    }
+
+    .fabric-overlay-wrapper {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10;
+    }
+
+    .has-tooltip {
+      position: relative;
+    }
+    .has-tooltip .tooltip-text {
+      visibility: hidden;
+      opacity: 0;
+      position: absolute;
+      top: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%) translateY(-4px);
+      background-color: #0f172a;
+      color: #f8fafc;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 4px 8px;
+      border-radius: 6px;
+      white-space: nowrap;
+      pointer-events: none;
+      transition: all 0.15s ease;
+      z-index: 60;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    }
+    .dark .has-tooltip .tooltip-text {
+      background-color: #334155;
+    }
+    .has-tooltip:hover .tooltip-text {
+      visibility: visible;
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    input[type="range"] {
+      accent-color: #6366f1;
+    }
+
+    /* Glowing professional dark landing aesthetic */
+    .glow-bg {
+      background: radial-gradient(circle at 50% 20%, rgba(99, 102, 241, 0.18) 0%, rgba(10, 15, 30, 1) 75%);
+    }
+    .neon-card {
+      background: rgba(30, 41, 59, 0.8);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      box-shadow: 0 0 35px -5px rgba(99, 102, 241, 0.25), inset 0 1px 1px 0 rgba(255, 255, 255, 0.1);
+    }
+  </style>
+</head>
+<body class="bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 font-sans h-screen w-screen overflow-hidden flex flex-col select-none transition-colors duration-200">
+
+  <input type="file" id="pdf-file-input" accept="application/pdf" class="hidden" />
+  <input type="file" id="image-file-input" accept="image/png, image/jpeg, image/webp, image/svg+xml" class="hidden" />
+
+  <!-- ======================================================================= -->
+  <!-- TOP STICKY FLOATING TOOLBAR -->
+  <!-- ======================================================================= -->
+  <header id="top-toolbar" class="h-16 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 px-3 lg:px-5 flex items-center justify-between gap-2 z-40 shadow-sm shrink-0">
+    
+    <!-- Left: Brand & Upload New -->
+    <div class="flex items-center gap-2.5 shrink-0">
+      <div class="flex items-center gap-2 pr-2 border-r border-slate-200 dark:border-slate-800">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-700 flex items-center justify-center text-white shadow-md shadow-indigo-500/25">
+          <i data-lucide="file-text" class="w-5 h-5"></i>
+        </div>
+        <div class="hidden sm:block leading-tight">
+          <h1 class="font-bold text-sm tracking-tight text-slate-900 dark:text-white">PDF Studio <span class="text-xs font-semibold px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-300">PRO</span></h1>
+          <p id="doc-filename-label" class="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[130px]">No file loaded</p>
+        </div>
+      </div>
+
+      <button id="btn-upload-new" class="has-tooltip flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition">
+        <i data-lucide="folder-open" class="w-4 h-4 text-indigo-600 dark:text-indigo-400"></i>
+        <span class="hidden md:inline">Open PDF</span>
+        <span class="tooltip-text">Upload New PDF File</span>
+      </button>
+    </div>
+
+    <!-- Center: Annotation & Editing Tools -->
+    <div id="editing-tools-group" class="flex items-center gap-1 sm:gap-1.5 overflow-x-auto py-1 px-1 no-scrollbar opacity-40 pointer-events-none transition-opacity duration-200">
+      
+      <!-- Select -->
+      <button id="tool-select" data-tool="select" class="tool-btn has-tooltip p-2 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 bg-indigo-50 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-300 ring-1 ring-indigo-500/30 transition">
+        <i data-lucide="mouse-pointer" class="w-4 h-4"></i>
+        <span class="tooltip-text">Select & Move (V)</span>
+      </button>
+
+      <!-- Text & Speech Dictation -->
+      <button id="tool-text" data-tool="text" class="tool-btn has-tooltip p-2 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+        <i data-lucide="type" class="w-4 h-4"></i>
+        <span class="tooltip-text">Add Text (T)</span>
+      </button>
+
+      <button id="btn-speech-dictate" class="has-tooltip p-2 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 hover:text-indigo-600 dark:hover:text-indigo-400 transition" title="Voice Dictation">
+        <i id="speech-icon" data-lucide="mic" class="w-4 h-4"></i>
+        <span class="tooltip-text">Voice Speech Dictation (Click to Speak)</span>
+      </button>
+
+      <!-- Image -->
+      <button id="tool-image" class="has-tooltip p-2 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+        <i data-lucide="image-plus" class="w-4 h-4"></i>
+        <span class="tooltip-text">Insert Image (I)</span>
+      </button>
+
+      <div class="h-5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5"></div>
+
+      <!-- Text Styling -->
+      <div class="flex items-center gap-1.5 bg-slate-100/80 dark:bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-200/60 dark:border-slate-700/60">
+        <select id="text-size-select" class="bg-transparent text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none cursor-pointer" title="Font Size">
+          <option value="14" class="dark:bg-slate-800">14px</option>
+          <option value="18" class="dark:bg-slate-800">18px</option>
+          <option value="24" selected class="dark:bg-slate-800">24px</option>
+          <option value="32" class="dark:bg-slate-800">32px</option>
+          <option value="48" class="dark:bg-slate-800">48px</option>
+        </select>
+        <input type="color" id="text-color-picker" value="#1e293b" class="w-5 h-5 rounded cursor-pointer border-0 bg-transparent p-0" title="Text Color" />
+      </div>
+
+      <div class="h-5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5"></div>
+
+      <!-- HIGHLIGHTER TOOL + OPACITY & COLORS -->
+      <div class="flex items-center gap-1.5 bg-slate-100/80 dark:bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-200/60 dark:border-slate-700/60">
+        <button id="tool-highlight-free" data-tool="highlight-free" class="tool-btn has-tooltip p-1.5 rounded-md text-slate-700 dark:text-slate-200 hover:bg-slate-200/70 dark:hover:bg-slate-700 transition">
+          <i data-lucide="highlighter" class="w-4 h-4"></i>
+          <span class="tooltip-text">Freehand Highlighter (H)</span>
+        </button>
+        <button id="tool-highlight-box" data-tool="highlight-box" class="tool-btn has-tooltip p-1.5 rounded-md text-slate-700 dark:text-slate-200 hover:bg-slate-200/70 dark:hover:bg-slate-700 transition">
+          <i data-lucide="square-dashed-bottom" class="w-4 h-4"></i>
+          <span class="tooltip-text">Box Highlighter (B)</span>
+        </button>
+        <!-- Highlight Colors -->
+        <div class="flex items-center gap-1 pl-1 border-l border-slate-300 dark:border-slate-700">
+          <button data-hl-color="yellow" class="hl-swatch has-tooltip w-3.5 h-3.5 rounded-full bg-yellow-400 ring-2 ring-offset-1 ring-slate-900 dark:ring-white transition" title="Yellow"></button>
+          <button data-hl-color="green" class="hl-swatch has-tooltip w-3.5 h-3.5 rounded-full bg-green-400 opacity-75 transition" title="Green"></button>
+          <button data-hl-color="pink" class="hl-swatch has-tooltip w-3.5 h-3.5 rounded-full bg-pink-400 opacity-75 transition" title="Pink"></button>
+          <button data-hl-color="blue" class="hl-swatch has-tooltip w-3.5 h-3.5 rounded-full bg-blue-400 opacity-75 transition" title="Blue"></button>
+        </div>
+        <!-- Highlight Opacity Slider -->
+        <div class="flex items-center gap-1 pl-1 border-l border-slate-300 dark:border-slate-700">
+          <span class="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Op:</span>
+          <input id="hl-opacity-slider" type="range" min="0.1" max="0.9" step="0.1" value="0.4" class="w-14 h-1.5 cursor-pointer" title="Highlight Opacity" />
+        </div>
+      </div>
+
+      <div class="h-5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5"></div>
+
+      <!-- PEN TOOL (Manual + Straight Line, Red default, Width Slider, Color) -->
+      <div class="flex items-center gap-1.5 bg-slate-100/80 dark:bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-200/60 dark:border-slate-700/60">
+        <button id="tool-pen-free" data-tool="pen-free" class="tool-btn has-tooltip p-1.5 rounded-md text-slate-700 dark:text-slate-200 hover:bg-slate-200/70 dark:hover:bg-slate-700 transition">
+          <i data-lucide="pen-tool" class="w-4 h-4 text-rose-600 dark:text-rose-400"></i>
+          <span class="tooltip-text">Pen Freehand (P)</span>
+        </button>
+        <button id="tool-pen-line" data-tool="pen-line" class="tool-btn has-tooltip p-1.5 rounded-md text-slate-700 dark:text-slate-200 hover:bg-slate-200/70 dark:hover:bg-slate-700 transition">
+          <i data-lucide="slash" class="w-4 h-4 text-rose-600 dark:text-rose-400"></i>
+          <span class="tooltip-text">Pen Straight Line (L)</span>
+        </button>
+        <input type="color" id="pen-color-picker" value="#ef4444" class="w-5 h-5 rounded cursor-pointer border-0 bg-transparent p-0" title="Pen Color" />
+        <input id="pen-width-slider" type="range" min="1" max="15" step="1" value="3" class="w-14 h-1.5 cursor-pointer" title="Pen Width" />
+      </div>
+
+      <div class="h-5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5"></div>
+
+      <!-- SHAPES & SYMBOLS TOOLBAR DROPDOWN -->
+      <div class="relative">
+        <button id="btn-symbols-menu" class="has-tooltip flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 transition border border-indigo-200 dark:border-indigo-800">
+          <i data-lucide="shapes" class="w-4 h-4"></i>
+          <span>Symbols & Shapes</span>
+          <i data-lucide="chevron-down" class="w-3 h-3"></i>
+          <span class="tooltip-text">Insert Shapes, Arrows & Symbols</span>
+        </button>
+
+        <!-- Dropdown Menu -->
+        <div id="symbols-dropdown" class="hidden absolute top-full left-0 mt-1 w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl p-2 z-50 grid grid-cols-2 gap-1.5">
+          <button data-shape="arrow-single" class="shape-item flex items-center gap-2 p-2 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200">
+            <i data-lucide="arrow-right" class="w-4 h-4 text-indigo-500 pointer-events-none"></i>
+            <span class="pointer-events-none">Arrow</span>
+          </button>
+          <button data-shape="arrow-double" class="shape-item flex items-center gap-2 p-2 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200">
+            <i data-lucide="move-horizontal" class="w-4 h-4 text-indigo-500 pointer-events-none"></i>
+            <span class="pointer-events-none">Double Arrow</span>
+          </button>
+          <button data-shape="hand" class="shape-item flex items-center gap-2 p-2 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200">
+            <i data-lucide="hand" class="w-4 h-4 text-amber-500 pointer-events-none"></i>
+            <span class="pointer-events-none">Hand Pointer</span>
+          </button>
+          <button data-shape="rectangle" class="shape-item flex items-center gap-2 p-2 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200">
+            <i data-lucide="square" class="w-4 h-4 text-emerald-500 pointer-events-none"></i>
+            <span class="pointer-events-none">Rectangle</span>
+          </button>
+          <button data-shape="circle" class="shape-item flex items-center gap-2 p-2 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200">
+            <i data-lucide="circle" class="w-4 h-4 text-emerald-500 pointer-events-none"></i>
+            <span class="pointer-events-none">Circle</span>
+          </button>
+          <button data-shape="triangle" class="shape-item flex items-center gap-2 p-2 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200">
+            <i data-lucide="triangle" class="w-4 h-4 text-emerald-500 pointer-events-none"></i>
+            <span class="pointer-events-none">Triangle</span>
+          </button>
+          <button data-shape="star" class="shape-item flex items-center gap-2 p-2 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200">
+            <i data-lucide="star" class="w-4 h-4 text-amber-500 pointer-events-none"></i>
+            <span class="pointer-events-none">Star</span>
+          </button>
+          <button data-shape="check" class="shape-item flex items-center gap-2 p-2 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200">
+            <i data-lucide="check" class="w-4 h-4 text-emerald-600 pointer-events-none"></i>
+            <span class="pointer-events-none">Checkmark</span>
+          </button>
+          <button data-shape="cross" class="shape-item flex items-center gap-2 p-2 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200">
+            <i data-lucide="x" class="w-4 h-4 text-rose-500 pointer-events-none"></i>
+            <span class="pointer-events-none">Cross (X)</span>
+          </button>
+          <button data-shape="question" class="shape-item flex items-center gap-2 p-2 rounded-lg text-xs hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200">
+            <i data-lucide="help-circle" class="w-4 h-4 text-indigo-500 pointer-events-none"></i>
+            <span class="pointer-events-none">Question</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="h-5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5"></div>
+
+      <!-- Undo / Redo / Delete -->
+      <button id="btn-undo" disabled class="has-tooltip p-2 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none transition">
+        <i data-lucide="undo-2" class="w-4 h-4"></i>
+        <span class="tooltip-text">Undo (Ctrl+Z)</span>
+      </button>
+
+      <button id="btn-redo" disabled class="has-tooltip p-2 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none transition">
+        <i data-lucide="redo-2" class="w-4 h-4"></i>
+        <span class="tooltip-text">Redo (Ctrl+Y)</span>
+      </button>
+
+      <button id="btn-delete" class="has-tooltip p-2 rounded-lg text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition">
+        <i data-lucide="trash-2" class="w-4 h-4"></i>
+        <span class="tooltip-text">Delete Selected (Del)</span>
+      </button>
+    </div>
+
+    <!-- Right: Auto-Scroll, Dark Mode, Fullscreen, Save PDF -->
+    <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+      <div id="autoscroll-group" class="hidden xl:flex items-center gap-2 bg-slate-100 dark:bg-slate-800/90 px-2.5 py-1 rounded-xl border border-slate-200/70 dark:border-slate-700/70 opacity-40 pointer-events-none transition-opacity duration-200">
+        <button id="btn-autoscroll-toggle" class="has-tooltip flex items-center gap-1 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:text-indigo-600 dark:hover:text-indigo-400 transition">
+          <i id="autoscroll-icon" data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+          <span>Auto-Scroll</span>
+          <span class="tooltip-text">Toggle Vertical Auto-Scroll</span>
+        </button>
+        <input id="autoscroll-speed" type="range" min="1" max="10" step="1" value="2" class="w-20 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-lg cursor-pointer" />
+        <span id="autoscroll-speed-label" class="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 w-6 text-right">2x</span>
+      </div>
+
+      <button id="btn-autoscroll-mobile" class="xl:hidden has-tooltip p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 opacity-40 pointer-events-none transition">
+        <i id="autoscroll-mobile-icon" data-lucide="play" class="w-4 h-4"></i>
+        <span class="tooltip-text">Toggle Auto-Scroll</span>
+      </button>
+
+      <button id="btn-dark-mode" class="has-tooltip p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition">
+        <i id="dark-mode-icon" data-lucide="moon" class="w-4 h-4"></i>
+        <span class="tooltip-text">Toggle Dark Mode & Invert PDF</span>
+      </button>
+
+      <button id="btn-fullscreen" class="has-tooltip p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition">
+        <i id="fullscreen-icon" data-lucide="maximize" class="w-4 h-4"></i>
+        <span class="tooltip-text">Full-Screen Mode</span>
+      </button>
+
+      <button id="btn-save-pdf" disabled class="has-tooltip flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white shadow-md shadow-indigo-600/25 disabled:opacity-40 disabled:pointer-events-none transition">
+        <i data-lucide="download" class="w-4 h-4"></i>
+        <span class="hidden sm:inline">Save PDF</span>
+        <span class="tooltip-text">Flatten Annotations & Download PDF</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Mobile Auto-Scroll Bar -->
+  <div id="mobile-autoscroll-bar" class="hidden xl:hidden bg-white/90 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 px-4 py-1.5 flex items-center justify-center gap-3 text-xs z-30">
+    <span class="font-medium text-slate-600 dark:text-slate-300">Auto-Scroll Speed:</span>
+    <input id="autoscroll-speed-mobile" type="range" min="1" max="10" step="1" value="2" class="w-32 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-lg cursor-pointer" />
+    <span id="autoscroll-speed-mobile-label" class="font-bold text-indigo-600 dark:text-indigo-400">2x</span>
+  </div>
+
+  <button id="floating-exit-fullscreen" class="hidden fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-full bg-slate-900/90 dark:bg-white/90 text-white dark:text-slate-900 text-xs font-semibold shadow-2xl backdrop-blur border border-white/15 hover:scale-105 active:scale-95 transition">
+    <i data-lucide="minimize-2" class="w-4 h-4"></i>
+    <span>Exit Full Screen</span>
+  </button>
+
+  <!-- ======================================================================= -->
+  <!-- MAIN CONTENT AREA (Professional Glowing Dark Landing + Workspace) -->
+  <!-- ======================================================================= -->
+  <main class="relative flex-1 flex flex-col overflow-hidden">
+
+    <!-- 1. PROFESSIONAL GLOWING DARK LANDING SCREEN -->
+    <section id="upload-screen" class="flex-1 flex items-center justify-center p-6 overflow-y-auto glow-bg">
+      <div class="max-w-2xl w-full text-center">
+        <!-- Glowing Header Badge -->
+        <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 text-xs font-semibold mb-6 shadow-[0_0_20px_rgba(99,102,241,0.3)]">
+          <i data-lucide="sparkles" class="w-3.5 h-3.5 text-indigo-400 animate-pulse"></i>
+          <span>Next-Gen Client-Side PDF Studio</span>
+        </div>
+
+        <h2 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight mb-3">
+          Professional PDF Viewer & Editor
+        </h2>
+        <p class="text-sm sm:text-base text-slate-400 max-w-lg mx-auto mb-10 leading-relaxed">
+          Annotate, highlight with adjustable opacity, draw red pens & straight lines, insert shapes, symbols & voice-dictated text—100% private, zero server uploads.
+        </p>
+
+        <!-- Neon Drop Zone Card -->
+        <div id="drop-zone" class="neon-card group relative rounded-3xl p-8 sm:p-12 text-center transition-all duration-300 cursor-pointer hover:border-indigo-500 hover:shadow-[0_0_40px_rgba(99,102,241,0.35)]">
+          
+          <div class="w-20 h-20 mx-auto mb-6 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 group-hover:scale-110 group-hover:bg-indigo-600 group-hover:text-white transition-all duration-300 shadow-[0_0_25px_rgba(99,102,241,0.25)]">
+            <i data-lucide="upload-cloud" class="w-10 h-10"></i>
+          </div>
+
+          <h3 class="text-xl font-bold text-white mb-2">
+            Drop your PDF document here
+          </h3>
+          <p class="text-xs sm:text-sm text-slate-400 max-w-sm mx-auto mb-8">
+            Supports multi-page PDFs, drag & drop, or load our instant sample template.
+          </p>
+
+          <div class="flex flex-col sm:flex-row items-center justify-center gap-3">
+            <button id="btn-select-pdf" type="button" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold text-sm bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/40 transition transform active:scale-95">
+              <i data-lucide="file-plus-2" class="w-4 h-4"></i>
+              <span>Select PDF File</span>
+            </button>
+
+            <button id="btn-load-sample" type="button" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-semibold text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+              <i data-lucide="wand-2" class="w-4 h-4 text-amber-400"></i>
+              <span>Load Sample 3-Page PDF</span>
+            </button>
+          </div>
+
+          <!-- Feature Pills -->
+          <div class="mt-10 pt-6 border-t border-slate-800 grid grid-cols-2 sm:grid-cols-4 gap-3 text-left">
+            <div class="flex items-center gap-2 text-xs text-slate-300">
+              <i data-lucide="highlighter" class="w-4 h-4 text-amber-400 shrink-0"></i>
+              <span>Variable Opacity</span>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-slate-300">
+              <i data-lucide="pen-tool" class="w-4 h-4 text-rose-400 shrink-0"></i>
+              <span>Red Pen & Straight Line</span>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-slate-300">
+              <i data-lucide="mic" class="w-4 h-4 text-indigo-400 shrink-0"></i>
+              <span>Speech-to-Text Dictation</span>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-slate-300">
+              <i data-lucide="download" class="w-4 h-4 text-emerald-400 shrink-0"></i>
+              <span>Instant Flatten Export</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. MAIN PDF WORKSPACE -->
+    <section id="pdf-workspace" class="hidden flex-1 flex flex-col overflow-hidden relative">
+      
+      <div class="fixed bottom-5 left-5 z-30 flex items-center gap-2 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 px-3.5 py-2 rounded-full shadow-lg text-xs font-medium text-slate-700 dark:text-slate-200">
+        <span class="flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          <span>Page <strong id="current-page-indicator">1</strong> of <strong id="total-pages-indicator">1</strong></span>
+        </span>
+        <span class="text-slate-300 dark:text-slate-700">|</span>
+        <span id="active-tool-badge" class="text-indigo-600 dark:text-indigo-400 font-semibold">Select Mode</span>
+      </div>
+
+      <div id="pdf-scroll-container" class="flex-1 overflow-y-auto overflow-x-auto px-3 sm:px-8 py-8">
+        <div id="pages-list" class="flex flex-col items-center min-h-full"></div>
+      </div>
+    </section>
+
+    <!-- LOADING MODAL -->
+    <div id="loading-overlay" class="hidden fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center">
+        <div class="w-12 h-12 rounded-full border-4 border-indigo-900 border-t-indigo-500 animate-spin mx-auto mb-4"></div>
+        <h3 id="loading-title" class="text-base font-bold text-white mb-1">Rendering PDF...</h3>
+        <p id="loading-subtitle" class="text-xs text-slate-400 mb-4">Preparing high-resolution canvases</p>
+        <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+          <div id="loading-progress-bar" class="bg-indigo-500 h-full w-0 transition-all duration-200"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+  </main>
+
+  <!-- ======================================================================= -->
+  <!-- APPLICATION SCRIPT -->
+  <!-- ======================================================================= -->
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    lucide.createIcons();
+
+    const state = {
+      pdfBytes: null,
+      fileName: 'document.pdf',
+      pdfDoc: null,
+      numPages: 0,
+      activePageIndex: 1,
+      renderScale: 1.5,
+      pagesData: [],
+      currentTool: 'select', // 'select' | 'text' | 'highlight-free' | 'highlight-box' | 'pen-free' | 'pen-line'
+      textColor: '#1e293b',
+      fontSize: 24,
+      highlightColorName: 'yellow',
+      highlightOpacity: 0.4,
+      penColor: '#ef4444',
+      penWidth: 3,
+      isDarkMode: false,
+      autoScroll: { active: false, speed: 2, rafId: null },
+      history: { undoStack: [], redoStack: [], isRestoring: false, pageSnapshots: new Map() },
+      speechRecognition: null,
+      isListening: false
+    };
+
+    const HIGHLIGHT_COLOR_HEX = {
+      yellow: '#facc15',
+      green: '#4ade80',
+      pink: '#f472b6',
+      blue: '#60a5fa'
+    };
+
+    function getHighlightRgba(colorName, opacity) {
+      const hex = HIGHLIGHT_COLOR_HEX[colorName] || '#facc15';
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+    }
+
+    const els = {
+      pdfFileInput: document.getElementById('pdf-file-input'),
+      imageFileInput: document.getElementById('image-file-input'),
+      uploadScreen: document.getElementById('upload-screen'),
+      dropZone: document.getElementById('drop-zone'),
+      btnSelectPdf: document.getElementById('btn-select-pdf'),
+      btnLoadSample: document.getElementById('btn-load-sample'),
+      btnUploadNew: document.getElementById('btn-upload-new'),
+      docFilenameLabel: document.getElementById('doc-filename-label'),
+      pdfWorkspace: document.getElementById('pdf-workspace'),
+      scrollContainer: document.getElementById('pdf-scroll-container'),
+      pagesList: document.getElementById('pages-list'),
+      editingToolsGroup: document.getElementById('editing-tools-group'),
+      autoscrollGroup: document.getElementById('autoscroll-group'),
+      toolButtons: document.querySelectorAll('.tool-btn'),
+      hlSwatches: document.querySelectorAll('.hl-swatch'),
+      hlOpacitySlider: document.getElementById('hl-opacity-slider'),
+      penColorPicker: document.getElementById('pen-color-picker'),
+      penWidthSlider: document.getElementById('pen-width-slider'),
+      textSizeSelect: document.getElementById('text-size-select'),
+      textColorPicker: document.getElementById('text-color-picker'),
+      btnSymbolsMenu: document.getElementById('btn-symbols-menu'),
+      symbolsDropdown: document.getElementById('symbols-dropdown'),
+      shapeItems: document.querySelectorAll('.shape-item'),
+      btnSpeechDictate: document.getElementById('btn-speech-dictate'),
+      speechIcon: document.getElementById('speech-icon'),
+      btnUndo: document.getElementById('btn-undo'),
+      btnRedo: document.getElementById('btn-redo'),
+      btnDelete: document.getElementById('btn-delete'),
+      btnAutoScrollToggle: document.getElementById('btn-autoscroll-toggle'),
+      autoScrollIcon: document.getElementById('autoscroll-icon'),
+      autoScrollSpeed: document.getElementById('autoscroll-speed'),
+      autoScrollSpeedLabel: document.getElementById('autoscroll-speed-label'),
+      btnAutoScrollMobile: document.getElementById('btn-autoscroll-mobile'),
+      autoScrollMobileIcon: document.getElementById('autoscroll-mobile-icon'),
+      mobileAutoScrollBar: document.getElementById('mobile-autoscroll-bar'),
+      autoScrollSpeedMobile: document.getElementById('autoscroll-speed-mobile'),
+      autoScrollSpeedMobileLabel: document.getElementById('autoscroll-speed-mobile-label'),
+      btnDarkMode: document.getElementById('btn-dark-mode'),
+      darkModeIcon: document.getElementById('dark-mode-icon'),
+      btnFullscreen: document.getElementById('btn-fullscreen'),
+      fullscreenIcon: document.getElementById('fullscreen-icon'),
+      floatingExitFullscreen: document.getElementById('floating-exit-fullscreen'),
+      btnSavePdf: document.getElementById('btn-save-pdf'),
+      currentPageIndicator: document.getElementById('current-page-indicator'),
+      totalPagesIndicator: document.getElementById('total-pages-indicator'),
+      activeToolBadge: document.getElementById('active-tool-badge'),
+      loadingOverlay: document.getElementById('loading-overlay'),
+      loadingTitle: document.getElementById('loading-title'),
+      loadingSubtitle: document.getElementById('loading-subtitle'),
+      loadingProgressBar: document.getElementById('loading-progress-bar'),
+      toastContainer: document.getElementById('toast-container')
+    };
+
+    function showToast(message, type = 'info') {
+      const toast = document.createElement('div');
+      const bgClass = type === 'success' ? 'bg-emerald-600 text-white' : type === 'error' ? 'bg-rose-600 text-white' : 'bg-slate-900 text-white border border-slate-700';
+      toast.className = `pointer-events-auto flex items-center gap-2 px-4 py-2.5 rounded-xl shadow-xl text-xs font-medium transition-all duration-300 transform translate-y-2 opacity-0 ${bgClass}`;
+      toast.innerHTML = `<span>${message}</span>`;
+      els.toastContainer.appendChild(toast);
+      requestAnimationFrame(() => toast.classList.remove('translate-y-2', 'opacity-0'));
+      setTimeout(() => {
+        toast.classList.add('translate-y-2', 'opacity-0');
+        setTimeout(() => toast.remove(), 300);
+      }, 3200);
+    }
+
+    function showLoading(title, subtitle, pct = 0) {
+      els.loadingTitle.textContent = title;
+      els.loadingSubtitle.textContent = subtitle;
+      els.loadingProgressBar.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+      els.loadingOverlay.classList.remove('hidden');
+    }
+    function updateLoadingProgress(sub, pct) {
+      if (sub) els.loadingSubtitle.textContent = sub;
+      els.loadingProgressBar.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+    }
+    function hideLoading() { els.loadingOverlay.classList.add('hidden'); }
+
+    async function generateSamplePdfBytes() {
+      const { PDFDocument, StandardFonts, rgb } = PDFLib;
+      const pdfDoc = await PDFDocument.create();
+      const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+      const pages = [
+        { title: 'PDF Studio Pro — Sample Document', sub: 'Page 1 of 3 • Overview & Quick Guide', text: ['1. Use the Highlighter tool with opacity slider to highlight text.', '2. Select Pen (Freehand or Straight Line) in Red color to mark notes.', '3. Insert Shapes & Symbols (Arrows, Hand pointer, Stars, Checkmarks).', '4. Use Voice Speech Dictation to speak and add text to the PDF.'] },
+        { title: 'Technical Architecture & Highlights', sub: 'Page 2 of 3 • Feature Specifications', text: ['• 100% Client-Side execution using PDF.js, Fabric.js and pdf-lib.', '• Smooth vertical scrolling & Dark Mode PDF Invert toggle.', '• Multi-page undo & redo history (Ctrl+Z / Ctrl+Y).'] },
+        { title: 'Approval & Sign-Off', sub: 'Page 3 of 3 • Signature Section', text: ['• Manager Sign-Off: _________________________', '• Date: October 2026', '• Status: Ready for Review'] }
+      ];
+
+      pages.forEach((p, idx) => {
+        const page = pdfDoc.addPage([612, 792]);
+        const { width, height } = page.getSize();
+        page.drawRectangle({ x: 40, y: height - 110, width: width - 80, height: 65, color: rgb(0.94, 0.95, 1.0) });
+        page.drawText(p.title, { x: 56, y: height - 72, size: 16, font: fontBold, color: rgb(0.18, 0.2, 0.55) });
+        page.drawText(p.sub, { x: 56, y: height - 94, size: 11, font: fontRegular, color: rgb(0.35, 0.4, 0.55) });
+
+        let y = height - 160;
+        p.text.forEach(line => {
+          page.drawText(line, { x: 52, y, size: 12, font: fontRegular, color: rgb(0.15, 0.18, 0.24) });
+          y -= 40;
+        });
+
+        page.drawRectangle({ x: 52, y: 140, width: width - 104, height: 140, borderColor: rgb(0.78, 0.82, 0.92), borderWidth: 1, color: rgb(0.98, 0.99, 1.0) });
+        page.drawText('Interactive Annotation Canvas Area', { x: 72, y: 235, size: 13, font: fontBold, color: rgb(0.25, 0.28, 0.38) });
+        page.drawText('Draw straight red lines, arrows, or place symbols here.', { x: 72, y: 210, size: 11, font: fontRegular, color: rgb(0.45, 0.48, 0.58) });
+        page.drawText(`Page ${idx + 1} of ${pages.length}`, { x: 52, y: 45, size: 10, font: fontRegular, color: rgb(0.55, 0.58, 0.65) });
+      });
+
+      return await pdfDoc.save();
+    }
+
+    async function loadPdfFromBytes(uint8Array, fileName = 'document.pdf') {
+      try {
+        stopAutoScroll();
+        showLoading('Loading PDF Document...', 'Parsing pages and workspace', 10);
+
+        state.pdfBytes = uint8Array.slice();
+        state.fileName = fileName;
+        if (els.docFilenameLabel) {
+          els.docFilenameLabel.textContent = fileName;
+          els.docFilenameLabel.title = fileName;
+        }
+
+        state.pagesData.forEach(p => { if (p.fabricCanvas) p.fabricCanvas.dispose(); });
+        state.pagesData = [];
+        state.history.undoStack = [];
+        state.history.redoStack = [];
+        state.history.pageSnapshots.clear();
+        updateUndoRedoButtons();
+        if (els.pagesList) els.pagesList.innerHTML = '';
+
+        const loadingTask = pdfjsLib.getDocument({ data: uint8Array.slice() });
+        state.pdfDoc = await loadingTask.promise;
+        state.numPages = state.pdfDoc.numPages;
+        state.activePageIndex = 1;
+
+        if (els.totalPagesIndicator) els.totalPagesIndicator.textContent = state.numPages;
+        if (els.currentPageIndicator) els.currentPageIndicator.textContent = '1';
+
+        if (els.uploadScreen) els.uploadScreen.classList.add('hidden');
+        if (els.pdfWorkspace) els.pdfWorkspace.classList.remove('hidden');
+
+        if (els.editingToolsGroup) els.editingToolsGroup.classList.remove('opacity-40', 'pointer-events-none');
+        if (els.autoscrollGroup) els.autoscrollGroup.classList.remove('opacity-40', 'pointer-events-none');
+        if (els.btnAutoScrollMobile) els.btnAutoScrollMobile.classList.remove('opacity-40', 'pointer-events-none');
+        if (els.btnSavePdf) els.btnSavePdf.disabled = false;
+
+        const containerWidth = Math.max(320, (els.scrollContainer ? els.scrollContainer.clientWidth : window.innerWidth) - 48);
+        const firstPage = await state.pdfDoc.getPage(1);
+        const viewport = firstPage.getViewport({ scale: 1 });
+        state.renderScale = Math.max(1.0, Math.min(1.65, Math.min(880, containerWidth) / viewport.width));
+
+        for (let pageNum = 1; pageNum <= state.numPages; pageNum++) {
+          const pct = Math.round((pageNum / state.numPages) * 90) + 10;
+          updateLoadingProgress(`Rendering page ${pageNum} of ${state.numPages}...`, pct);
+          await renderSinglePdfPage(pageNum);
+        }
+
+        highlightActivePageWrapper(1);
+        applyToolToAllCanvases(state.currentTool);
+        hideLoading();
+        showToast(`Loaded "${fileName}" (${state.numPages} pages)`, 'success');
+      } catch (err) {
+        console.error('Error loading PDF:', err);
+        hideLoading();
+        showToast('Failed to load PDF file.', 'error');
+      }
+    }
+
+    async function renderSinglePdfPage(pageNumber) {
+      const page = await state.pdfDoc.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: state.renderScale });
+      const width = Math.floor(viewport.width);
+      const height = Math.floor(viewport.height);
+
+      const wrapperEl = document.createElement('div');
+      wrapperEl.className = 'pdf-page-wrapper';
+      wrapperEl.style.width = `${width}px`;
+      wrapperEl.style.height = `${height}px`;
+      wrapperEl.dataset.pageNumber = pageNumber;
+
+      const bgCanvas = document.createElement('canvas');
+      bgCanvas.className = 'pdf-bg-canvas';
+      bgCanvas.width = width;
+      bgCanvas.height = height;
+
+      const overlayHolder = document.createElement('div');
+      overlayHolder.className = 'fabric-overlay-wrapper';
+      const fabricCanvasEl = document.createElement('canvas');
+      fabricCanvasEl.width = width;
+      fabricCanvasEl.height = height;
+      overlayHolder.appendChild(fabricCanvasEl);
+
+      const pageBadge = document.createElement('div');
+      pageBadge.className = 'absolute bottom-2 right-3 z-20 px-2 py-0.5 rounded bg-slate-900/50 text-white text-[10px] font-medium pointer-events-none backdrop-blur-sm';
+      pageBadge.textContent = `Page ${pageNumber}`;
+
+      wrapperEl.appendChild(bgCanvas);
+      wrapperEl.appendChild(overlayHolder);
+      wrapperEl.appendChild(pageBadge);
+      if (els.pagesList) els.pagesList.appendChild(wrapperEl);
+
+      await page.render({ canvasContext: bgCanvas.getContext('2d'), viewport }).promise;
+
+      const fabricCanvas = new fabric.Canvas(fabricCanvasEl, { width, height, selection: true, preserveObjectStacking: true });
+      fabric.Object.prototype.set({ transparentCorners: false, cornerColor: '#6366f1', cornerStrokeColor: '#ffffff', borderColor: '#6366f1', cornerSize: 10, padding: 6, cornerStyle: 'circle' });
+
+      const initialJson = JSON.stringify(fabricCanvas.toJSON(['isHighlight']));
+      state.history.pageSnapshots.set(pageNumber, initialJson);
+
+      setupFabricCanvasEvents(fabricCanvas, pageNumber);
+      state.pagesData.push({ pageNumber, wrapperEl, bgCanvas, fabricCanvas, width, height });
+    }
+
+    function setupFabricCanvasEvents(fabricCanvas, pageNumber) {
+      let isDragging = false;
+      let startX = 0, startY = 0;
+      let activeShape = null;
+
+      fabricCanvas.on('mouse:down', (opt) => {
+        setActivePage(pageNumber);
+        state.pagesData.forEach(p => { if (p.pageNumber !== pageNumber) p.fabricCanvas.discardActiveObject().requestRenderAll(); });
+
+        const pointer = fabricCanvas.getPointer(opt.e);
+
+        if (state.currentTool === 'text' && !opt.target) {
+          const iText = new fabric.IText('Type here...', { left: pointer.x, top: pointer.y, fontFamily: 'Inter, sans-serif', fontSize: Number(state.fontSize) || 24, fill: state.textColor, editable: true });
+          fabricCanvas.add(iText);
+          fabricCanvas.setActiveObject(iText);
+          iText.enterEditing();
+          iText.selectAll();
+          fabricCanvas.requestRenderAll();
+          setTool('select');
+          return;
+        }
+
+        if (state.currentTool === 'highlight-box' || state.currentTool === 'pen-line') {
+          isDragging = true;
+          startX = pointer.x;
+          startY = pointer.y;
+
+          if (state.currentTool === 'highlight-box') {
+            activeShape = new fabric.Rect({ left: startX, top: startY, width: 1, height: 1, fill: getHighlightRgba(state.highlightColorName, state.highlightOpacity), rx: 4, ry: 4, selectable: true, isHighlight: true });
+          } else {
+            activeShape = new fabric.Line([startX, startY, startX, startY], { stroke: state.penColor, strokeWidth: Number(state.penWidth), selectable: true, strokeLineCap: 'round' });
+          }
+          fabricCanvas.add(activeShape);
+        }
+      });
+
+      fabricCanvas.on('mouse:move', (opt) => {
+        if (!isDragging || !activeShape) return;
+        const pointer = fabricCanvas.getPointer(opt.e);
+
+        if (state.currentTool === 'highlight-box') {
+          const left = Math.min(startX, pointer.x);
+          const top = Math.min(startY, pointer.y);
+          const width = Math.abs(pointer.x - startX);
+          const height = Math.abs(pointer.y - startY);
+          activeShape.set({ left, top, width, height });
+        } else if (state.currentTool === 'pen-line') {
+          activeShape.set({ x2: pointer.x, y2: pointer.y });
+        }
+        fabricCanvas.requestRenderAll();
+      });
+
+      fabricCanvas.on('mouse:up', () => {
+        if (isDragging && activeShape) {
+          isDragging = false;
+          activeShape.setCoords();
+          recordCanvasHistory(pageNumber);
+          activeShape = null;
+        }
+      });
+
+      fabricCanvas.on('path:created', (e) => {
+        if (e.path) {
+          if (state.currentTool === 'highlight-free') {
+            e.path.set({ isHighlight: true, stroke: getHighlightRgba(state.highlightColorName, state.highlightOpacity) });
+          }
+        }
+        recordCanvasHistory(pageNumber);
+      });
+
+      fabricCanvas.on('object:added', (e) => {
+        if (state.history.isRestoring) return;
+        if (isDragging && e.target === activeShape) return;
+        if (e.target && e.target.type === 'path' && fabricCanvas.isDrawingMode) return;
+        recordCanvasHistory(pageNumber);
+      });
+      fabricCanvas.on('object:modified', () => { if (!state.history.isRestoring) recordCanvasHistory(pageNumber); });
+      fabricCanvas.on('object:removed', () => { if (!state.history.isRestoring) recordCanvasHistory(pageNumber); });
+    }
+
+    function recordCanvasHistory(pageNumber) {
+      if (state.history.isRestoring) return;
+      const pageObj = state.pagesData.find(p => p.pageNumber === pageNumber);
+      if (!pageObj) return;
+
+      const prevJson = state.history.pageSnapshots.get(pageNumber);
+      const nextJson = JSON.stringify(pageObj.fabricCanvas.toJSON(['isHighlight']));
+      if (prevJson === nextJson) return;
+
+      state.history.undoStack.push({ pageNumber, prevJson, nextJson });
+      if (state.history.undoStack.length > 60) state.history.undoStack.shift();
+      state.history.redoStack = [];
+      state.history.pageSnapshots.set(pageNumber, nextJson);
+      updateUndoRedoButtons();
+    }
+
+    function performUndo() {
+      if (state.history.undoStack.length === 0) return;
+      const action = state.history.undoStack.pop();
+      state.history.redoStack.push(action);
+      restorePageCanvasState(action.pageNumber, action.prevJson);
+      updateUndoRedoButtons();
+    }
+
+    function performRedo() {
+      if (state.history.redoStack.length === 0) return;
+      const action = state.history.redoStack.pop();
+      state.history.undoStack.push(action);
+      restorePageCanvasState(action.pageNumber, action.nextJson);
+      updateUndoRedoButtons();
+    }
+
+    function restorePageCanvasState(pageNumber, jsonString) {
+      const pageObj = state.pagesData.find(p => p.pageNumber === pageNumber);
+      if (!pageObj) return;
+      state.history.isRestoring = true;
+      pageObj.fabricCanvas.loadFromJSON(jsonString, () => {
+        pageObj.fabricCanvas.renderAll();
+        state.history.pageSnapshots.set(pageNumber, jsonString);
+        state.history.isRestoring = false;
+        setActivePage(pageNumber);
+      });
+    }
+
+    function updateUndoRedoButtons() {
+      if (els.btnUndo) els.btnUndo.disabled = state.history.undoStack.length === 0;
+      if (els.btnRedo) els.btnRedo.disabled = state.history.redoStack.length === 0;
+    }
+
+    function setTool(toolName) {
+      state.currentTool = toolName;
+      if (els.toolButtons) {
+        els.toolButtons.forEach(btn => {
+          const match = btn.dataset.tool === toolName;
+          btn.classList.toggle('bg-indigo-50', match);
+          btn.classList.toggle('text-indigo-600', match);
+          btn.classList.toggle('dark:bg-indigo-500/20', match);
+          btn.classList.toggle('dark:text-indigo-300', match);
+          btn.classList.toggle('ring-1', match);
+          btn.classList.toggle('ring-indigo-500/30', match);
+        });
+      }
+
+      const labels = {
+        'select': 'Select & Move Mode',
+        'text': 'Add Text Mode (Click page)',
+        'highlight-free': 'Freehand Highlighter',
+        'highlight-box': 'Box Highlighter',
+        'pen-free': 'Pen Freehand (Red)',
+        'pen-line': 'Pen Straight Line'
+      };
+      if (els.activeToolBadge) els.activeToolBadge.textContent = labels[toolName] || 'Select Mode';
+      applyToolToAllCanvases(toolName);
+    }
+
+    function applyToolToAllCanvases(toolName) {
+      state.pagesData.forEach(({ fabricCanvas }) => {
+        const activeObj = fabricCanvas.getActiveObject();
+        if (activeObj && activeObj.isEditing) activeObj.exitEditing();
+
+        if (toolName === 'highlight-free') {
+          fabricCanvas.isDrawingMode = true;
+          const brush = new fabric.PencilBrush(fabricCanvas);
+          brush.color = getHighlightRgba(state.highlightColorName, state.highlightOpacity);
+          brush.width = 24;
+          fabricCanvas.freeDrawingBrush = brush;
+          fabricCanvas.defaultCursor = 'crosshair';
+        } else if (toolName === 'pen-free') {
+          fabricCanvas.isDrawingMode = true;
+          const brush = new fabric.PencilBrush(fabricCanvas);
+          brush.color = state.penColor;
+          brush.width = Number(state.penWidth);
+          fabricCanvas.freeDrawingBrush = brush;
+          fabricCanvas.defaultCursor = 'crosshair';
+        } else if (toolName === 'highlight-box' || toolName === 'pen-line') {
+          fabricCanvas.isDrawingMode = false;
+          fabricCanvas.selection = false;
+          fabricCanvas.defaultCursor = 'crosshair';
+          fabricCanvas.forEachObject(o => { o.selectable = false; });
+        } else {
+          fabricCanvas.isDrawingMode = false;
+          fabricCanvas.selection = true;
+          fabricCanvas.defaultCursor = 'default';
+          fabricCanvas.forEachObject(o => { o.selectable = true; });
+        }
+        fabricCanvas.requestRenderAll();
+      });
+    }
+
+    /* Insert Symbols / Shapes */
+    function insertShapeOrSymbol(type) {
+      const pageObj = state.pagesData.find(p => p.pageNumber === state.activePageIndex) || state.pagesData[0];
+      if (!pageObj) return;
+      const canvas = pageObj.fabricCanvas;
+      const cx = pageObj.width / 2;
+      const cy = pageObj.height / 2;
+
+      let obj = null;
+      if (type === 'rectangle') {
+        obj = new fabric.Rect({ left: cx - 50, top: cy - 35, width: 100, height: 70, fill: 'transparent', stroke: state.penColor, strokeWidth: 3 });
+      } else if (type === 'circle') {
+        obj = new fabric.Circle({ left: cx - 40, top: cy - 40, radius: 40, fill: 'transparent', stroke: state.penColor, strokeWidth: 3 });
+      } else if (type === 'triangle') {
+        obj = new fabric.Triangle({ left: cx - 45, top: cy - 45, width: 90, height: 90, fill: 'transparent', stroke: state.penColor, strokeWidth: 3 });
+      } else if (type === 'star') {
+        const points = [{x:0, y:-30}, {x:8, y:-10}, {x:30, y:-10}, {x:12, y:4}, {x:18, y:25}, {x:0, y:12}, {x:-18, y:25}, {x:-12, y:4}, {x:-30, y:-10}, {x:-8, y:-10}];
+        obj = new fabric.Polygon(points, { left: cx - 20, top: cy - 20, fill: '#f59e0b', stroke: '#d97706', strokeWidth: 2, scaleX: 1.5, scaleY: 1.5 });
+      } else if (type === 'check') {
+        obj = new fabric.Text('✓', { left: cx - 20, top: cy - 25, fontSize: 50, fill: '#10b981', fontFamily: 'Inter' });
+      } else if (type === 'cross') {
+        obj = new fabric.Text('✕', { left: cx - 20, top: cy - 25, fontSize: 45, fill: '#ef4444', fontFamily: 'Inter' });
+      } else if (type === 'question') {
+        obj = new fabric.Text('?', { left: cx - 15, top: cy - 25, fontSize: 45, fill: '#6366f1', fontFamily: 'Inter', fontWeight: 'bold' });
+      } else if (type === 'arrow-single') {
+        obj = new fabric.Group([
+          new fabric.Line([0, 0, 100, 0], { stroke: state.penColor, strokeWidth: 3, originX: 'left', originY: 'center' }),
+          new fabric.Triangle({ left: 100, top: 0, width: 12, height: 16, fill: state.penColor, angle: 90, originX: 'center', originY: 'center' })
+        ], { left: cx - 50, top: cy, selectable: true });
+      } else if (type === 'arrow-double') {
+        obj = new fabric.Group([
+          new fabric.Line([-50, 0, 50, 0], { stroke: state.penColor, strokeWidth: 3, originX: 'center', originY: 'center' }),
+          new fabric.Triangle({ left: -50, top: 0, width: 12, height: 16, fill: state.penColor, angle: -90, originX: 'center', originY: 'center' }),
+          new fabric.Triangle({ left: 50, top: 0, width: 12, height: 16, fill: state.penColor, angle: 90, originX: 'center', originY: 'center' })
+        ], { left: cx - 50, top: cy, selectable: true });
+      } else if (type === 'hand') {
+        obj = new fabric.Text('☞', { left: cx - 25, top: cy - 25, fontSize: 48, fill: '#f59e0b', fontFamily: 'Inter' });
+      }
+
+      if (obj) {
+        setTool('select');
+        canvas.add(obj);
+        canvas.setActiveObject(obj);
+        canvas.requestRenderAll();
+        showToast(`Added symbol to Page ${pageObj.pageNumber}`, 'success');
+      }
+      if (els.symbolsDropdown) els.symbolsDropdown.classList.add('hidden');
+    }
+
+    /* Speech-to-Text Voice Dictation */
+    function toggleSpeechDictation() {
+      const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognitionAPI) {
+        showToast('Speech recognition is not supported in this browser. Try Google Chrome.', 'error');
+        return;
+      }
+
+      if (state.isListening) {
+        if (state.speechRecognition) state.speechRecognition.stop();
+        return;
+      }
+
+      try {
+        state.speechRecognition = new SpeechRecognitionAPI();
+        state.speechRecognition.continuous = false;
+        state.speechRecognition.interimResults = false;
+        state.speechRecognition.lang = 'en-US';
+
+        state.speechRecognition.onstart = () => {
+          state.isListening = true;
+          if (els.speechIcon) els.speechIcon.setAttribute('data-lucide', 'mic-off');
+          if (els.btnSpeechDictate) els.btnSpeechDictate.classList.add('bg-indigo-100', 'dark:bg-indigo-900', 'text-indigo-600', 'animate-pulse');
+          lucide.createIcons();
+          showToast('Listening... Speak now to add text.', 'success');
+        };
+
+        state.speechRecognition.onresult = (event) => {
+          const transcript = event.results[0][0].transcript;
+          if (transcript) {
+            const pageObj = state.pagesData.find(p => p.pageNumber === state.activePageIndex) || state.pagesData[0];
+            if (pageObj) {
+              const cx = pageObj.width / 2 - 100;
+              const cy = pageObj.height / 2;
+              const iText = new fabric.IText(transcript, { left: cx, top: cy, fontFamily: 'Inter, sans-serif', fontSize: Number(state.fontSize) || 24, fill: state.textColor, editable: true });
+              pageObj.fabricCanvas.add(iText);
+              pageObj.fabricCanvas.setActiveObject(iText);
+              pageObj.fabricCanvas.requestRenderAll();
+              showToast(`Dictated: "${transcript}"`, 'success');
+            }
+          }
+        };
+
+        state.speechRecognition.onerror = (e) => {
+          console.error(e);
+          showToast('Voice recognition error: ' + e.error, 'error');
+          stopSpeechDictationUI();
+        };
+
+        state.speechRecognition.onend = () => {
+          stopSpeechDictationUI();
+        };
+
+        state.speechRecognition.start();
+      } catch (err) {
+        console.error(err);
+        showToast('Could not start speech recognition.', 'error');
+        stopSpeechDictationUI();
+      }
+    }
+
+    function stopSpeechDictationUI() {
+      state.isListening = false;
+      if (els.speechIcon) els.speechIcon.setAttribute('data-lucide', 'mic');
+      if (els.btnSpeechDictate) els.btnSpeechDictate.classList.remove('bg-indigo-100', 'dark:bg-indigo-900', 'text-indigo-600', 'animate-pulse');
+      lucide.createIcons();
+    }
+
+    function handleImageUpload(file) {
+      if (!file || state.pagesData.length === 0) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        fabric.Image.fromURL(e.target.result, (img) => {
+          const pageObj = state.pagesData.find(p => p.pageNumber === state.activePageIndex) || state.pagesData[0];
+          const maxW = pageObj.width * 0.45;
+          const maxH = pageObj.height * 0.45;
+          let scale = 1;
+          if (img.width > maxW || img.height > maxH) scale = Math.min(maxW / img.width, maxH / img.height);
+
+          img.set({ left: (pageObj.width - img.width * scale) / 2, top: (pageObj.height - img.height * scale) / 2, scaleX: scale, scaleY: scale });
+          setTool('select');
+          pageObj.fabricCanvas.add(img);
+          pageObj.fabricCanvas.setActiveObject(img);
+          pageObj.fabricCanvas.requestRenderAll();
+          showToast(`Image added to Page ${pageObj.pageNumber}`, 'success');
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function deleteSelectedObject() {
+      let count = 0;
+      state.pagesData.forEach(({ fabricCanvas, pageNumber }) => {
+        const objs = fabricCanvas.getActiveObjects();
+        if (objs && objs.length > 0) {
+          const single = fabricCanvas.getActiveObject();
+          if (single && single.isEditing) return;
+          state.history.isRestoring = true;
+          objs.forEach(o => fabricCanvas.remove(o));
+          fabricCanvas.discardActiveObject().requestRenderAll();
+          state.history.isRestoring = false;
+          recordCanvasHistory(pageNumber);
+          count += objs.length;
+        }
+      });
+      if (count > 0) showToast(`Deleted ${count} item(s)`);
+      else showToast('Select an element on the page first to delete.');
+    }
+
+    function setActivePage(num) {
+      state.activePageIndex = num;
+      if (els.currentPageIndicator) els.currentPageIndicator.textContent = String(num);
+      state.pagesData.forEach(p => p.wrapperEl.classList.toggle('active-page-ring', p.pageNumber === num));
+    }
+
+    if (els.scrollContainer) {
+      els.scrollContainer.addEventListener('scroll', () => {
+        if (state.pagesData.length === 0) return;
+        const rect = els.scrollContainer.getBoundingClientRect();
+        const center = rect.top + rect.height * 0.35;
+        let closest = state.activePageIndex;
+        let minDist = Infinity;
+        state.pagesData.forEach(p => {
+          const r = p.wrapperEl.getBoundingClientRect();
+          const dist = Math.abs(r.top - center);
+          if (dist < minDist) { minDist = dist; closest = p.pageNumber; }
+        });
+        if (closest !== state.activePageIndex) setActivePage(closest);
+      });
+    }
+
+    function toggleAutoScroll() {
+      if (state.pagesData.length === 0) return;
+      if (state.autoScroll.active) stopAutoScroll();
+      else startAutoScroll();
+    }
+    function startAutoScroll() {
+      state.autoScroll.active = true;
+      if (els.scrollContainer) els.scrollContainer.classList.add('auto-scrolling');
+      updateAutoScrollUI();
+      let last = performance.now();
+      function step(now) {
+        if (!state.autoScroll.active) return;
+        const dt = (now - last) / 1000;
+        last = now;
+        if (els.scrollContainer) {
+          els.scrollContainer.scrollTop += state.autoScroll.speed * 38 * dt;
+          const max = els.scrollContainer.scrollHeight - els.scrollContainer.clientHeight;
+          if (els.scrollContainer.scrollTop >= max - 1) { stopAutoScroll(); showToast('Reached end of document.'); return; }
+        }
+        state.autoScroll.rafId = requestAnimationFrame(step);
+      }
+      state.autoScroll.rafId = requestAnimationFrame(step);
+    }
+    function stopAutoScroll() {
+      state.autoScroll.active = false;
+      if (els.scrollContainer) els.scrollContainer.classList.remove('auto-scrolling');
+      if (state.autoScroll.rafId) { cancelAnimationFrame(state.autoScroll.rafId); state.autoScroll.rafId = null; }
+      updateAutoScrollUI();
+    }
+    function updateAutoScrollUI() {
+      const name = state.autoScroll.active ? 'pause' : 'play';
+      if (els.autoScrollIcon) els.autoScrollIcon.setAttribute('data-lucide', name);
+      if (els.autoScrollMobileIcon) els.autoScrollMobileIcon.setAttribute('data-lucide', name);
+      if (els.mobileAutoScrollBar) {
+        if (state.autoScroll.active) els.mobileAutoScrollBar.classList.remove('hidden');
+        else els.mobileAutoScrollBar.classList.add('hidden');
+      }
+      lucide.createIcons();
+    }
+    function setSpeed(v) {
+      state.autoScroll.speed = Number(v) || 2;
+      if (els.autoScrollSpeed) els.autoScrollSpeed.value = String(state.autoScroll.speed);
+      if (els.autoScrollSpeedMobile) els.autoScrollSpeedMobile.value = String(state.autoScroll.speed);
+      if (els.autoScrollSpeedLabel) els.autoScrollSpeedLabel.textContent = `${state.autoScroll.speed}x`;
+      if (els.autoScrollSpeedMobileLabel) els.autoScrollSpeedMobileLabel.textContent = `${state.autoScroll.speed}x`;
+    }
+
+    function toggleDarkMode() {
+      state.isDarkMode = !state.isDarkMode;
+      document.documentElement.classList.toggle('dark', state.isDarkMode);
+      if (els.pagesList) els.pagesList.classList.toggle('pdf-invert', state.isDarkMode);
+      if (els.darkModeIcon) els.darkModeIcon.setAttribute('data-lucide', state.isDarkMode ? 'sun' : 'moon');
+      lucide.createIcons();
+      showToast(state.isDarkMode ? 'Dark Mode & PDF Invert enabled' : 'Light mode restored');
+    }
+
+    function toggleFullScreen() {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(e => showToast(e.message, 'error'));
+      else document.exitFullscreen();
+    }
+    document.addEventListener('fullscreenchange', () => {
+      const full = Boolean(document.fullscreenElement);
+      if (els.fullscreenIcon) els.fullscreenIcon.setAttribute('data-lucide', full ? 'minimize' : 'maximize');
+      if (els.floatingExitFullscreen) els.floatingExitFullscreen.classList.toggle('hidden', !full);
+      lucide.createIcons();
+    });
+
+    async function exportModifiedPdf() {
+      if (!state.pdfBytes || state.pagesData.length === 0) return;
+      try {
+        stopAutoScroll();
+        showLoading('Saving Modified PDF...', 'Flattening annotations and symbols', 15);
+
+        state.pagesData.forEach(({ fabricCanvas }) => {
+          const obj = fabricCanvas.getActiveObject();
+          if (obj && obj.isEditing) obj.exitEditing();
+          fabricCanvas.discardActiveObject().renderAll();
+        });
+
+        const { PDFDocument } = PDFLib;
+        const pdfDoc = await PDFDocument.load(state.pdfBytes);
+        const pdfPages = pdfDoc.getPages();
+
+        for (let i = 0; i < state.pagesData.length; i++) {
+          const { fabricCanvas, pageNumber } = state.pagesData[i];
+          updateLoadingProgress(`Merging page ${pageNumber} of ${state.numPages}...`, Math.round(((i + 1) / state.pagesData.length) * 75) + 15);
+          if (fabricCanvas.getObjects().length > 0) {
+            const dataUrl = fabricCanvas.toDataURL({ format: 'png', multiplier: 2, enableRetinaScaling: true });
+            const png = await pdfDoc.embedPng(dataUrl);
+            const pg = pdfPages[i];
+            const { width, height } = pg.getSize();
+            pg.drawImage(png, { x: 0, y: 0, width, height });
+          }
+        }
+
+        updateLoadingProgress('Generating final PDF...', 95);
+        const bytes = await pdfDoc.save();
+        const blob = new Blob([bytes], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${state.fileName.replace(/\.pdf$/i, '')}-edited.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+        hideLoading();
+        showToast('Saved & downloaded modified PDF!', 'success');
+      } catch (err) {
+        console.error(err);
+        hideLoading();
+        showToast('Failed to export PDF.', 'error');
+      }
+    }
+
+    /* Event Listeners Setup with Robust Null Checks */
+    if (els.btnSelectPdf) els.btnSelectPdf.addEventListener('click', (e) => { e.stopPropagation(); if (els.pdfFileInput) els.pdfFileInput.click(); });
+    if (els.btnUploadNew) els.btnUploadNew.addEventListener('click', () => { if (els.pdfFileInput) els.pdfFileInput.click(); });
+    if (els.dropZone) {
+      els.dropZone.addEventListener('click', (e) => { if (!e.target.closest('button') && els.pdfFileInput) els.pdfFileInput.click(); });
+    }
+    if (els.pdfFileInput) {
+      els.pdfFileInput.addEventListener('change', async (e) => {
+        const f = e.target.files[0];
+        if (f) await loadPdfFromBytes(new Uint8Array(await f.arrayBuffer()), f.name);
+        els.pdfFileInput.value = '';
+      });
+    }
+
+    ['dragenter', 'dragover'].forEach(n => window.addEventListener(n, e => { e.preventDefault(); if (els.dropZone) els.dropZone.classList.add('border-indigo-500', 'bg-indigo-500/10'); }));
+    ['dragleave', 'drop'].forEach(n => window.addEventListener(n, e => { e.preventDefault(); if (els.dropZone) els.dropZone.classList.remove('border-indigo-500', 'bg-indigo-500/10'); }));
+    window.addEventListener('drop', async (e) => {
+      const f = e.dataTransfer?.files?.[0];
+      if (f?.type === 'application/pdf' || f?.name?.toLowerCase()?.endsWith('.pdf')) {
+        await loadPdfFromBytes(new Uint8Array(await f.arrayBuffer()), f.name);
+      } else if (f?.type?.startsWith('image/') && state.pagesData.length > 0) {
+        handleImageUpload(f);
+      }
+    });
+
+    if (els.btnLoadSample) {
+      els.btnLoadSample.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        showLoading('Creating Sample PDF...', 'Generating 3-page template', 30);
+        await loadPdfFromBytes(await generateSamplePdfBytes(), 'Sample-Professional-Guide.pdf');
+      });
+    }
+
+    if (els.toolButtons) {
+      els.toolButtons.forEach(btn => btn.addEventListener('click', () => { if (btn.dataset.tool) setTool(btn.dataset.tool); }));
+    }
+    if (els.toolImage) els.toolImage.addEventListener('click', () => { if (els.imageFileInput) els.imageFileInput.click(); });
+    if (els.imageFileInput) {
+      els.imageFileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleImageUpload(e.target.files[0]); els.imageFileInput.value = ''; });
+    }
+
+    // Symbols & Shapes dropdown toggle
+    if (els.btnSymbolsMenu && els.symbolsDropdown) {
+      els.btnSymbolsMenu.addEventListener('click', (e) => { e.stopPropagation(); els.symbolsDropdown.classList.toggle('hidden'); });
+      document.addEventListener('click', () => els.symbolsDropdown.classList.add('hidden'));
+    }
+    if (els.shapeItems) {
+      els.shapeItems.forEach(item => item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        insertShapeOrSymbol(item.dataset.shape);
+      }));
+    }
+
+    if (els.btnSpeechDictate) els.btnSpeechDictate.addEventListener('click', toggleSpeechDictation);
+
+    // Text & Color controls
+    if (els.textSizeSelect) {
+      els.textSizeSelect.addEventListener('change', (e) => {
+        state.fontSize = Number(e.target.value) || 24;
+        state.pagesData.forEach(({ fabricCanvas, pageNumber }) => {
+          const obj = fabricCanvas.getActiveObject();
+          if (obj && (obj.type === 'i-text' || obj.type === 'text')) {
+            obj.set('fontSize', state.fontSize);
+            fabricCanvas.requestRenderAll();
+            recordCanvasHistory(pageNumber);
+          }
+        });
+      });
+    }
+    if (els.textColorPicker) {
+      els.textColorPicker.addEventListener('input', (e) => {
+        state.textColor = e.target.value;
+        state.pagesData.forEach(({ fabricCanvas, pageNumber }) => {
+          const obj = fabricCanvas.getActiveObject();
+          if (obj && (obj.type === 'i-text' || obj.type === 'text')) {
+            obj.set('fill', state.textColor);
+            fabricCanvas.requestRenderAll();
+            recordCanvasHistory(pageNumber);
+          }
+        });
+      });
+    }
+
+    // Highlighter Swatches & Opacity
+    if (els.hlSwatches) {
+      els.hlSwatches.forEach(sw => sw.addEventListener('click', () => {
+        state.highlightColorName = sw.dataset.hlColor;
+        els.hlSwatches.forEach(s => { s.classList.remove('ring-2', 'ring-offset-1', 'ring-slate-900', 'dark:ring-white', 'opacity-100'); s.classList.add('opacity-75'); });
+        sw.classList.remove('opacity-75');
+        sw.classList.add('ring-2', 'ring-offset-1', 'ring-slate-900', 'dark:ring-white', 'opacity-100');
+        if (state.currentTool !== 'highlight-free' && state.currentTool !== 'highlight-box') setTool('highlight-free');
+        else applyToolToAllCanvases(state.currentTool);
+      }));
+    }
+    if (els.hlOpacitySlider) {
+      els.hlOpacitySlider.addEventListener('input', (e) => {
+        state.highlightOpacity = Number(e.target.value) || 0.4;
+        if (state.currentTool === 'highlight-free' || state.currentTool === 'highlight-box') applyToolToAllCanvases(state.currentTool);
+      });
+    }
+
+    // Pen Controls
+    if (els.penColorPicker) {
+      els.penColorPicker.addEventListener('input', (e) => {
+        state.penColor = e.target.value;
+        if (state.currentTool === 'pen-free') applyToolToAllCanvases('pen-free');
+      });
+    }
+    if (els.penWidthSlider) {
+      els.penWidthSlider.addEventListener('input', (e) => {
+        state.penWidth = Number(e.target.value) || 3;
+        if (state.currentTool === 'pen-free') applyToolToAllCanvases('pen-free');
+      });
+    }
+
+    if (els.btnUndo) els.btnUndo.addEventListener('click', performUndo);
+    if (els.btnRedo) els.btnRedo.addEventListener('click', performRedo);
+    if (els.btnDelete) els.btnDelete.addEventListener('click', deleteSelectedObject);
+
+    if (els.btnAutoScrollToggle) els.btnAutoScrollToggle.addEventListener('click', toggleAutoScroll);
+    if (els.btnAutoScrollMobile) els.btnAutoScrollMobile.addEventListener('click', toggleAutoScroll);
+    if (els.autoScrollSpeed) els.autoScrollSpeed.addEventListener('input', e => setSpeed(e.target.value));
+    if (els.autoScrollSpeedMobile) els.autoScrollSpeedMobile.addEventListener('input', e => setSpeed(e.target.value));
+
+    if (els.btnDarkMode) els.btnDarkMode.addEventListener('click', toggleDarkMode);
+    if (els.btnFullscreen) els.btnFullscreen.addEventListener('click', toggleFullScreen);
+    if (els.floatingExitFullscreen) els.floatingExitFullscreen.addEventListener('click', toggleFullScreen);
+    if (els.btnSavePdf) els.btnSavePdf.addEventListener('click', exportModifiedPdf);
+
+    window.addEventListener('keydown', (e) => {
+      if (state.pagesData.length === 0) return;
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+      const editing = state.pagesData.some(p => p.fabricCanvas.getActiveObject()?.isEditing);
+      if (editing) return;
+
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') { e.preventDefault(); performUndo(); return; }
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); performRedo(); return; }
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelectedObject(); return; }
+
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'v') setTool('select');
+        else if (k === 't') setTool('text');
+        else if (k === 'h') setTool('highlight-free');
+        else if (k === 'b') setTool('highlight-box');
+        else if (k === 'p') setTool('pen-free');
+        else if (k === 'l') setTool('pen-line');
+        else if (k === 'i') { if (els.imageFileInput) els.imageFileInput.click(); }
+      }
+    });
+  </script>
+</body>
+</html>
